@@ -221,35 +221,51 @@ class CentanetCrawler:
         """
         # 直接使用crawler，不再次使用async with（因为crawler已经在外部管理）
         print(f"  正在爬取列表页 {page_num}...")
+
+        # 关键：为列表页建立稳定 session_id，确保分页点击/页面状态在同一 Page 内持续
+        # 否则每次 arun 都可能新开 Page，导致翻页失效、或出现 HTML 过短（如 39 字符占位壳）
+        from crawl4ai.async_configs import CrawlerRunConfig
+        session_id = f"centanet_list_{hashlib.md5(url.encode('utf-8')).hexdigest()[:10]}"
+
+        # 标记：成交列表页（transaction）与买/租页面的“可提取链接方式”不同
+        is_transaction_list = "/findproperty/list/transaction" in url.lower() or url.lower().endswith("/list/transaction")
         
-        # 对于第1页，直接访问URL
+        # 对于第1页，直接访问URL（但必须带 session_id）
         if page_num == 1:
+            wait_time = 8 if is_transaction_list else 3
+
+            # 轻量 JS：触发可能的懒加载/虚拟列表渲染
+            warmup_js = """
+            (async () => {
+              try { window.scrollTo(0, 0); } catch(e) {}
+              await new Promise(r => setTimeout(r, 300));
+              try { window.scrollTo(0, Math.min(1200, document.body.scrollHeight * 0.2)); } catch(e) {}
+              await new Promise(r => setTimeout(r, 600));
+              try { window.scrollTo(0, 0); } catch(e) {}
+              return true;
+            })();
+            """
+
+            config = CrawlerRunConfig(
+                session_id=session_id,
+                js_code=warmup_js,
+                delay_before_return_html=wait_time,
+                simulate_user=True,
+                override_navigator=True,
+                magic=True,
+            )
             result = await crawler.arun(
                 url=url,
-                timeout=max(self.config.timeout, 60),
+                config=config,
+                timeout=max(self.config.timeout, 90 if is_transaction_list else 60),
                 wait_for="networkidle",
-                delay_before_return_html=3,
             )
         else:
             # 对于后续页面，需要从当前页面点击分页按钮
             # 关键：确保在同一浏览器会话中执行
-            # 如果这是第2页，先加载第1页；如果是第3页及以后，假设已经在第(page_num-1)页
+            # 注意：必须使用同一个 session_id，否则翻页会点击在“新开的第一页”上，状态无法延续
             print(f"    步骤1: 准备点击第{page_num}页按钮...")
-            
-            # 如果这是第2页，先加载第1页
-            if page_num == 2:
-                print(f"      加载第1页...")
-                first_page_result = await crawler.arun(
-                    url=url,
-                    timeout=max(self.config.timeout, 60),
-                    wait_for="networkidle",
-                    delay_before_return_html=3,
-                )
-                if not first_page_result.success:
-                    print(f"  ✗ 无法加载第1页: {first_page_result.error_message}")
-                    return []
-                print(f"      ✓ 第1页已加载")
-            
+
             print(f"    步骤2: 执行JavaScript点击第{page_num}页按钮...")
             
             # 构建JavaScript代码来点击分页按钮
@@ -438,65 +454,25 @@ class CentanetCrawler:
                 }})();
                 """
             
-            # 使用js_code参数执行JavaScript并获取更新后的HTML
-            # 关键：使用js_only=True确保在同一浏览器会话中执行，而不是重新加载页面
-            from crawl4ai.async_configs import CrawlerRunConfig
-            
-            # 对于第2页及以后，使用js_only=True在同一会话中执行JavaScript
-            # 关键：使用js_only=True时，页面已经加载，不需要wait_for（会导致超时）
-            # 我们完全依赖delay_before_return_html来等待JavaScript执行完成
-            from crawl4ai.async_configs import CrawlerRunConfig
-            
-            # 方法1: 尝试不设置wait_for（如果CrawlerRunConfig支持）
-            try:
-                config = CrawlerRunConfig(
-                    js_code=js_code,
-                    js_only=True,  # 关键：表示这是JS驱动的更新，不是完整页面加载
-                    # 不设置wait_for，因为页面已经加载，等待事件会导致超时
-                    delay_before_return_html=25,  # 增加等待时间到25秒，确保JavaScript执行完成和内容完全加载
-                )
-                
-                result = await crawler.arun(
-                    url=url,
-                    config=config,
-                    timeout=max(self.config.timeout, 200),  # 增加超时时间到200秒
-                )
-            except TypeError as e:
-                # 如果CrawlerRunConfig要求wait_for参数，使用一个不会导致超时的值
-                print(f"    ⚠ CrawlerRunConfig需要wait_for参数，使用备用配置...")
-                try:
-                    # 尝试使用一个自定义选择器，等待一个总是存在的元素
-                    config = CrawlerRunConfig(
-                        js_code=js_code,
-                        js_only=True,
-                        wait_for="body",  # 等待body元素（应该总是存在）
-                        wait_for_timeout=2000,  # 只等待2秒（body应该立即存在）
-                        delay_before_return_html=25,  # 增加等待时间到25秒
-                    )
-                    
-                    result = await crawler.arun(
-                        url=url,
-                        config=config,
-                        timeout=max(self.config.timeout, 200),
-                    )
-                except Exception as e2:
-                    print(f"    ⚠ 备用配置也失败，尝试直接使用js_code: {str(e2)}")
-                    # 最后备用：直接使用js_code参数
-                    result = await crawler.arun(
-                        url=url,
-                        js_code=js_code,
-                        delay_before_return_html=25,  # 增加等待时间到25秒
-                        timeout=max(self.config.timeout, 200),
-                    )
-            except Exception as e:
-                print(f"    ⚠ 配置执行异常，尝试直接使用js_code: {str(e)}")
-                # 备用方法：直接使用js_code参数
-                result = await crawler.arun(
-                    url=url,
-                    js_code=js_code,
-                    delay_before_return_html=25,  # 增加等待时间到25秒
-                    timeout=max(self.config.timeout, 200),
-                )
+            # 使用 session_id + js_only=True 在同一页面内点击分页
+            # 成交列表页通常渲染更慢，适当加长等待
+            delay_s = 30 if is_transaction_list else 20
+
+            config = CrawlerRunConfig(
+                session_id=session_id,
+                js_code=js_code,
+                js_only=True,
+                delay_before_return_html=delay_s,
+                simulate_user=True,
+                override_navigator=True,
+                magic=True,
+                log_console=True,
+            )
+            result = await crawler.arun(
+                url=url,
+                config=config,
+                timeout=max(self.config.timeout, 200),
+            )
             
             # 确保result不是None
             if result is None:
@@ -513,53 +489,11 @@ class CentanetCrawler:
             
             print(f"    ✓ JavaScript执行完成")
             
-            # 关键：使用js_only=True时，result.html应该包含当前页面的HTML
-            # 但我们需要确保JavaScript执行后，内容已经完全加载
-            # 增加delay_before_return_html的时间，确保内容加载完成
-            print(f"    步骤3: 等待内容完全加载并获取HTML...")
-            
-            # 再次使用js_only=True获取当前页面的HTML（不重新访问URL）
-            # 这次只是等待并获取HTML，不执行额外的JavaScript
-            try:
-                from crawl4ai.async_configs import CrawlerRunConfig
-                # 创建一个只等待的JavaScript代码
-                wait_and_get_html_js = f"""
-                (async () => {{
-                    // 等待内容完全加载
-                    await new Promise(resolve => setTimeout(resolve, 5000));
-                    // 验证页面内容是否更新（检查分页按钮状态）
-                    const activePage = Array.from(document.querySelectorAll('*')).find(el => {{
-                        const text = (el.textContent || '').trim();
-                        return text === '{page_num}' && 
-                               (el.classList.contains('active') || 
-                                el.classList.contains('current') ||
-                                el.getAttribute('aria-current') === 'page');
-                    }});
-                    console.log('[PAGINATION] Active page button found:', !!activePage);
-                    return true;
-                }})();
-                """
-                
-                html_config = CrawlerRunConfig(
-                    js_code=wait_and_get_html_js,
-                    js_only=True,
-                    delay_before_return_html=5,  # 再等待5秒
-                )
-                
-                html_result = await crawler.arun(
-                    url=url,
-                    config=html_config,
-                    timeout=max(self.config.timeout, 60),
-                )
-                
-                # 如果成功获取HTML，使用新的HTML
-                if html_result and html_result.success and html_result.html and len(html_result.html) > 1000:
-                    result.html = html_result.html
-                    print(f"    ✓ 已获取更新后的页面内容 (HTML长度: {len(result.html)} 字符)")
-                else:
-                    print(f"    ⚠ 使用原始result.html (长度: {len(result.html) if result.html else 0} 字符)")
-            except Exception as e:
-                print(f"    ⚠ 获取更新HTML失败: {str(e)}，使用原始result.html")
+            # 检查获取的HTML是否有效（有 session_id 时通常不会再出现 39 字符壳）
+            if result and result.html:
+                print(f"    ✓ 已获取页面内容 (HTML长度: {len(result.html)} 字符)")
+            else:
+                print(f"    ⚠ 警告: result.html为空或无效")
             
             # 验证：检查提取的URL是否与第1页不同（简单验证）
             if page_num == 2 and hasattr(self, '_first_page_urls') and result and result.html:
@@ -591,106 +525,164 @@ class CentanetCrawler:
             print(f"  ✗ 无法访问列表页 {page_num}: {result.error_message if hasattr(result, 'error_message') else 'Unknown error'}")
             return []
         
-        property_urls = []
-        
-        # 方法1: 尝试使用CSS选择器提取
+        # 重要：列表页解析必须基于当前 result.html，不能再触发第二次 arun([FETCH])
+        # 否则会把分页状态/会话重置，出现“翻页后仍是第一页”或 HTML 过短的问题。
+        property_urls: List[str] = []
+
+        # 方法：使用 BeautifulSoup 从当前 HTML 提取链接（買樓/租樓通常有 /findproperty/detail/）
         try:
-            # 根据实际页面结构调整选择器
-            schema = {
-                    "name": "properties",
-                    "baseSelector": ".property-item, .listing-item, [class*='property'], [class*='listing']",
-                    "fields": [
-                        {
-                            "name": "title",
-                            "selector": ".title, .property-title, h3, h4, a",
-                            "type": "text"
-                        },
-                        {
-                            "name": "price",
-                            "selector": ".price, .property-price, [class*='price']",
-                            "type": "text"
-                        },
-                        {
-                            "name": "area",
-                            "selector": ".area, .property-area, [class*='area']",
-                            "type": "text"
-                        },
-                        {
-                            "name": "location",
-                            "selector": ".location, .address, [class*='location']",
-                            "type": "text"
-                        },
-                        {
-                            "name": "link",
-                            "selector": "a",
-                            "type": "attribute",
-                            "attribute": "href"
-                        }
-                    ]
-            }
-            
-            extraction_strategy = JsonCssExtractionStrategy(schema)
-            result_with_extraction = await crawler.arun(
-                url=url,
-                extraction_strategy=extraction_strategy
-            )
-            
-            if result_with_extraction.extracted_content:
-                try:
-                    data = json.loads(result_with_extraction.extracted_content)
-                    properties = data.get("properties", [])
-                    
-                    for prop in properties:
-                        link = prop.get("link", "")
-                        if link:
-                            # 处理相对URL
-                            if not link.startswith("http"):
-                                link = urljoin(self.config.base_url, link)
-                            property_urls.append(link)
-                except json.JSONDecodeError:
-                    pass
+            if result is None or not hasattr(result, "html") or not result.html:
+                print(f"  ⚠ 警告: 无法获取页面HTML内容")
+                return []
+
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(result.html, "html.parser")
+            links = soup.find_all("a", href=True)
+
+            # Centanet的详情页URL模式: /findproperty/detail/
+            # 注意：成交页面可能使用不同的URL模式，需要更广泛的匹配
+            link_patterns = [
+                '/findproperty/detail/',  # Centanet特定模式（買樓/租樓）
+                '/findproperty/transaction/',  # 成交页面可能使用此模式
+                '/property/',
+                '/listing/',
+                '/detail/',
+                '/house/',
+                '/unit/',
+                '/transaction/',  # 成交详情
+            ]
+
+            # 排除的模式
+            exclude_patterns = [
+                '/list/',
+                '/estate/',
+                '/agent-detail/',
+                '/agent/',
+                '/district/',
+                'pasttranindex.aspx',  # 成交索引页面，不是详情页
+                'index.aspx',  # 索引页面
+            ]
+
+            for link in links:
+                href = link.get('href', '')
+                if not href:
+                    continue
+
+                href_lower = href.lower()
+
+                # 检查是否应该排除
+                should_exclude = any(exclude in href_lower for exclude in exclude_patterns)
+                if should_exclude:
+                    continue
+
+                # 检查是否是详情页链接
+                for pattern in link_patterns:
+                    if pattern in href_lower:
+                        # 处理相对URL
+                        if not href.startswith('http'):
+                            href = urljoin(self.config.base_url, href)
+                        
+                        # 确保是有效的详情页URL
+                        # 对于成交页面，URL可能包含 /transaction/ 而不是 /detail/
+                        if ('/detail/' in href_lower or '/transaction/' in href_lower) and href not in property_urls:
+                            property_urls.append(href)
+                        break
+        except ImportError:
+            print("  ⚠ BeautifulSoup 未安装，无法解析列表页HTML")
         except Exception as e:
-            print(f"  ⚠ CSS选择器提取失败: {str(e)}")
-        
-        # 方法2: 如果CSS选择器失败，使用正则表达式和BeautifulSoup查找链接
-        if not property_urls:
+            print(f"  ⚠ 列表页HTML解析失败: {str(e)}")
+
+        # 成交列表页：页面本身往往没有 <a href> 明文链接，需从 Nuxt 状态中抽取 transaction-detail URL
+        if not property_urls and is_transaction_list:
             try:
-                # 确保result和result.html存在
-                if result is None or not hasattr(result, 'html') or not result.html:
-                    print(f"  ⚠ 警告: 无法获取页面HTML内容")
-                    return []
-                
-                from bs4 import BeautifulSoup
-                soup = BeautifulSoup(result.html, 'html.parser')
-                links = soup.find_all('a', href=True)
-                
-                # Centanet的详情页URL模式: /findproperty/detail/
-                link_patterns = [
-                    '/findproperty/detail/',  # Centanet特定模式
-                    '/property/',
-                    '/listing/',
-                    '/detail/',
-                    '/house/',
-                    '/unit/',
-                ]
-                
-                for link in links:
-                    href = link.get('href', '')
-                    # 检查是否是详情页链接
-                    for pattern in link_patterns:
-                        if pattern in href.lower():
-                            # 排除列表页和其他非详情页链接
-                            if '/list/' not in href.lower() and '/estate/' not in href.lower():
-                                if not href.startswith('http'):
-                                    href = urljoin(self.config.base_url, href)
-                                # 确保是详情页URL
-                                if '/detail/' in href.lower() and href not in property_urls:
-                                    property_urls.append(href)
-                            break
-            except ImportError:
-                print("  ⚠ BeautifulSoup 未安装，无法使用备用方法")
+                extract_tx_js = r"""
+                (async () => {
+                  // 不使用复杂的正则 literal（容易触发 Playwright: Invalid regular expression flags）
+                  // 改用字符串扫描抽取 /findproperty/transaction-detail/ URL
+                  const urls = [];
+                  const seen = new Set();
+                  const needle = '/findproperty/transaction-detail/';
+                  const host = 'https://hk.centanet.com';
+
+                  function addUrl(u){
+                    if (!u) return;
+                    if (seen.has(u)) return;
+                    seen.add(u);
+                    urls.push(u);
+                  }
+
+                  function extractFromString(s){
+                    if (!s || typeof s !== 'string') return;
+                    let idx = 0;
+                    while (true) {
+                      idx = s.indexOf(needle, idx);
+                      if (idx === -1) break;
+
+                      // 如果同一字符串里包含 host，则尽量截取绝对URL；否则截取相对路径
+                      let start = s.lastIndexOf(host, idx);
+                      if (start === -1) start = idx;
+
+                      let end = idx;
+                      while (end < s.length) {
+                        const ch = s[end];
+                        if (ch === '"' || ch === "'" || ch === '<' || ch === '>' || ch === ' ' || ch === '\n' || ch === '\r' || ch === '\t') break;
+                        end++;
+                      }
+
+                      addUrl(s.slice(start, end));
+                      idx = end;
+                    }
+                  }
+
+                  function walk(x, depth){
+                    if (depth > 12 || x == null) return;
+                    const t = typeof x;
+                    if (t === 'string') { extractFromString(x); return; }
+                    if (t !== 'object') return;
+                    if (Array.isArray(x)) { for (const v of x) walk(v, depth+1); return; }
+                    for (const k in x) { try { walk(x[k], depth+1); } catch(e) {} }
+                  }
+
+                  try { walk(window.__NUXT__, 0); } catch(e) {}
+                  const payload = JSON.stringify(urls.slice(0, 500));
+
+                  let el = document.getElementById('__C4AI_TX_URLS__');
+                  if (!el) {
+                    el = document.createElement('pre');
+                    el.id = '__C4AI_TX_URLS__';
+                    el.style.display = 'none';
+                    document.body.appendChild(el);
+                  }
+                  el.textContent = payload;
+                  return true;
+                })();
+                """
+                html_result = await crawler.arun(
+                    url=url,
+                    config=CrawlerRunConfig(
+                        session_id=session_id,
+                        js_only=True,
+                        js_code=extract_tx_js,
+                        delay_before_return_html=1,
+                    ),
+                    timeout=max(self.config.timeout, 90),
+                )
+                if html_result and html_result.success and html_result.html:
+                    from bs4 import BeautifulSoup
+                    soup2 = BeautifulSoup(html_result.html, "html.parser")
+                    pre = soup2.select_one("#__C4AI_TX_URLS__")
+                    if pre and pre.get_text(strip=True):
+                        import json as _json
+                        raw = pre.get_text(strip=True)
+                        candidates = _json.loads(raw)
+                        for u in candidates:
+                            if not u:
+                                continue
+                            abs_u = u if u.startswith("http") else urljoin(self.config.base_url, u)
+                            if "/findproperty/transaction-detail/" in abs_u.lower() and abs_u not in property_urls:
+                                property_urls.append(abs_u)
             except Exception as e:
-                print(f"  ⚠ 备用方法失败: {str(e)}")
+                print(f"  ⚠ 成交列表 Nuxt URL 提取失败: {str(e)}")
         
         # 去重
         property_urls = list(set(property_urls))
@@ -714,13 +706,26 @@ class CentanetCrawler:
                     from bs4 import BeautifulSoup
                     soup = BeautifulSoup(result.html, 'html.parser')
                     all_links = soup.find_all('a', href=True)
-                    detail_links = [link for link in all_links if '/detail/' in link.get('href', '').lower()]
+                    # 检查多种可能的链接模式（包括成交页面）
+                    detail_links = [
+                        link for link in all_links 
+                        if any(pattern in link.get('href', '').lower() 
+                               for pattern in ['/detail/', '/transaction/', '/findproperty/detail/', '/findproperty/transaction/'])
+                        and '/list/' not in link.get('href', '').lower()
+                    ]
                     print(f"    页面总链接数: {len(all_links)}")
-                    print(f"    包含'/detail/'的链接数: {len(detail_links)}")
+                    print(f"    包含详情页模式的链接数: {len(detail_links)}")
                     if detail_links:
-                        print(f"    示例detail链接: {detail_links[0].get('href', '')[:80]}...")
-                except:
-                    pass
+                        print(f"    示例链接: {detail_links[0].get('href', '')[:80]}...")
+                    else:
+                        # 如果没有找到详情链接，显示前几个链接用于调试
+                        print(f"    前5个链接示例:")
+                        for i, link in enumerate(all_links[:5], 1):
+                            href = link.get('href', '')[:80]
+                            text = link.get_text(strip=True)[:30]
+                            print(f"      {i}. {href} (文本: {text})")
+                except Exception as e:
+                    print(f"    调试信息提取失败: {str(e)}")
         
         return property_urls
     
@@ -734,6 +739,21 @@ class CentanetCrawler:
         Returns:
             PropertyData 对象或 None
         """
+        # 检查URL是否是有效的详情页URL
+        # 成交页面可能使用不同的URL格式，需要特殊处理
+        url_lower = url.lower()
+        invalid_patterns = [
+            'pasttranindex.aspx',  # 成交索引页面
+            'index.aspx',  # 索引页面
+            '/list/',  # 列表页
+            '/estate/',  # 屋苑页
+        ]
+        
+        if any(pattern in url_lower for pattern in invalid_patterns):
+            print(f"  ⊙ 跳过非详情页URL: {url[:80]}...")
+            self.failed_urls.append(url)
+            return None
+        
         # 检查是否已爬取（使用线程安全的方式）
         # 注意：在并发环境下，这个检查可能不够精确，但可以避免重复爬取
         if url in self.crawled_urls:
@@ -828,6 +848,7 @@ class CentanetCrawler:
         sub_district = None  # 逸瓏灣等（从面包屑中提取，第五个）
         area_name = None  # 可能从其他来源提取
         estate_name = None  # 逸瓏灣等（从面包屑中提取，最后一个）
+        is_transaction_detail = '/findproperty/transaction-detail/' in (url or '').lower()
         
         # ========================================================================
         # 方法1: 从页面文本中直接提取面包屑模式（通过正则表达式）
@@ -901,18 +922,69 @@ class CentanetCrawler:
                     if paths_match:
                         paths_content = paths_match.group(1)
 
-                        # 解析paths数组中的path字段（包含实际的文本）
+                        # 成交(transaction-detail) 特别点：
+                        # - paths 里「主頁 / 成交」通常在 label:"主頁"/label:"成交" 中
+                        # - 而后续层级在 path:"九龍_..."/path:"南昌站_..." 中
+                        # 因此这里同时抽 label 字面量 + path 显示文本，按出现顺序拼成 breadcrumb_items
+
+                        breadcrumb_items = []
+
+                        # 1) 先抽取 label:"..."（只会抓到字面量，不会抓到 label:k 这种变量引用）
+                        label_matches = re.findall(r'label:"([^"]+)"', paths_content)
+                        for lb in label_matches:
+                            if lb:
+                                breadcrumb_items.append(lb.strip())
+
+                        # 2) 再抽取 path:"..." 并取 '_' 前的显示文本
                         path_matches = re.findall(r'path:"([^"]+)"', paths_content)
-                        if path_matches:
-                            # 从path中提取实际的显示文本（去掉编码部分）
-                            breadcrumb_items = []
-                            for path in path_matches:
-                                # path格式如："新界西_4-NW", "荃灣 | 麗城_23-WS050", "荃景圍_19-HMA100"
-                                if '_' in path:
-                                    display_text = path.split('_')[0]
+                        for path in path_matches:
+                            if '_' in path:
+                                display_text = path.split('_')[0].strip()
+                                if display_text:
                                     breadcrumb_items.append(display_text)
 
-                            # 映射面包屑项 - 改进的逻辑
+                        if breadcrumb_items:
+
+                            # 映射面包屑项
+                            # - transaction-detail：严格按网页层级「主頁 > 成交 > (港島/九龍/新界東/新界西) > ...」映射
+                            # - buy/rent：保留原先的智能映射逻辑
+                            if is_transaction_detail:
+                                # 期望层级示例：主頁 成交 九龍 南昌站 南昌站 匯璽 (后面可能还有期数/座等，忽略)
+                                items = [i for i in breadcrumb_items if i and i not in ['>', '/', '地圖搵樓', '地图搵楼', '網上搵樓', '网上搵楼']]
+                                # 去掉开头主頁
+                                if items and items[0] in ['主頁', '主页']:
+                                    items = items[1:]
+
+                                # category 固定优先取「成交」
+                                if items and items[0] == '成交':
+                                    category = '成交'
+                                    items = items[1:]
+                                else:
+                                    category = '成交'
+
+                                # region：港島/九龍/新界東/新界西（或香港島）
+                                for cand in items:
+                                    if cand in ['港島', '香港島', '九龍', '新界東', '新界西']:
+                                        region = '港島' if cand == '香港島' else cand
+                                        break
+                                if region and region in items:
+                                    # 只移除第一个出现的 region
+                                    ri = items.index(region)
+                                    items = items[:ri] + items[ri+1:]
+
+                                # 后续层级：按网页显示顺序映射
+                                # district_level2 = 第1个, sub_district = 第2个, estate_name = 第3个
+                                if len(items) >= 1:
+                                    district_level2 = items[0]
+                                if len(items) >= 2:
+                                    sub_district = items[1]
+                                if len(items) >= 3:
+                                    estate_name = items[2]
+
+                                paths_found = True
+                                break
+
+                            # 买/租：原先逻辑
                             if len(breadcrumb_items) >= 4:
                                 # 找到区域信息（跳过主頁和買樓）
                                 for item in breadcrumb_items:
@@ -921,7 +993,7 @@ class CentanetCrawler:
                                         break
 
                                 # 获取非区域和非导航的项目
-                                non_region_items = [item for item in breadcrumb_items if item != region and item not in ['主頁', '買樓']]
+                                non_region_items = [item for item in breadcrumb_items if item != region and item not in ['主頁', '主页', '買樓']]
 
                                 # 智能映射基于项目数量和内容
                                 if len(non_region_items) >= 1:
@@ -1823,6 +1895,9 @@ class CentanetCrawler:
             if price_elem:
                 break
         
+        # 获取完整页面文本用于提取（提前定义，避免变量作用域问题）
+        desc_text = soup.get_text() if soup else ""
+        
         # 从页面文本中提取价格（优先从price_elem，如果没有则从整个页面文本）
         price_source_text = None
         if price_elem:
@@ -1971,8 +2046,7 @@ class CentanetCrawler:
                 if location and location not in ['加入比較', '加入比较']:
                     break
         
-        # 获取完整页面文本用于提取（只定义一次）
-        desc_text = soup.get_text() if soup else ""
+        # desc_text 已在上面定义（在价格提取之前），这里不需要重复定义
         
         # 如果title还是无效，尝试从description中提取（作为最后的备用方法）
         # description中通常包含"Y.I高層"、"瓏門 1期 2座"等信息
@@ -2357,7 +2431,6 @@ class CentanetCrawler:
         if date_match:
             date_str = date_match.group(1)
             try:
-                from datetime import datetime
                 # 尝试解析日期
                 for fmt in ['%Y-%m-%d', '%Y/%m/%d', '%Y-%m-%d']:
                     try:
@@ -2582,7 +2655,43 @@ class CentanetCrawler:
         
         return property_data
     
-    async def crawl_all(self, max_pages: int = 5, max_properties: Optional[int] = None):
+    def _build_list_url(self, category: Optional[str] = None) -> str:
+        """
+        根据category构建列表页URL
+        
+        Args:
+            category: 类别，可选值：
+                - "buy" 或 "買樓": 買樓列表
+                - "rent" 或 "租樓": 租樓列表
+                - "transaction" 或 "成交": 成交列表
+                - None: 使用默认配置的list_url
+        
+        Returns:
+            列表页URL
+        """
+        if category is None:
+            return self.config.list_url
+        
+        # Category映射
+        category_map = {
+            "buy": "buy",
+            "買樓": "buy",
+            "rent": "rent",
+            "租樓": "rent",
+            "transaction": "transaction",
+            "成交": "transaction",
+        }
+        
+        category_key = category_map.get(category.lower() if category else None, "buy")
+        return f"{self.config.base_url}/findproperty/list/{category_key}"
+    
+    async def crawl_all(
+        self, 
+        max_pages: int = 5, 
+        max_properties: Optional[int] = None,
+        category: Optional[str] = None,
+        region: Optional[str] = None
+    ):
         """
         批量爬取所有页面
         
@@ -2591,17 +2700,34 @@ class CentanetCrawler:
         - 按页顺序爬取列表页，提取详情页URL
         - 对每个详情页URL调用crawl_detail_page方法
         - 支持限制最大页数和房产数量
+        - 支持按category和region筛选
         - 自动去重（通过crawled_urls集合）
         - 记录失败的URL（用于错误追踪）
         
         Args:
             max_pages: 最大爬取页数，默认为5
             max_properties: 最大爬取房产数量，None表示不限制
+            category: 类别筛选，可选值：
+                - "buy" 或 "買樓": 只爬取買樓
+                - "rent" 或 "租樓": 只爬取租樓
+                - "transaction" 或 "成交": 只爬取成交
+                - None: 不筛选类别（使用默认配置）
+            region: 地区筛选，可选值：
+                - "港島", "九龍", "新界東", "新界西" 等
+                - None: 不筛选地区
+                注意：如果指定了region，会在爬取详情页后根据提取的region字段进行过滤
         """
         print("="*70)
         print("开始爬取中原地产数据")
         print("="*70)
-        print(f"列表页URL: {self.config.list_url}")
+        
+        # 构建列表页URL（根据category）
+        list_url = self._build_list_url(category)
+        print(f"列表页URL: {list_url}")
+        if category:
+            print(f"类别筛选: {category}")
+        if region:
+            print(f"地区筛选: {region} (将在爬取后过滤)")
         print(f"最大页数: {max_pages}")
         print(f"最大房产数: {max_properties or '无限制'}")
         print("="*70)
@@ -2621,7 +2747,7 @@ class CentanetCrawler:
             for page in range(1, max_pages + 1):
                 # Centanet使用AJAX分页，所有页面使用相同的URL
                 # 需要通过JavaScript点击分页按钮来加载不同页面的内容
-                list_url = self.config.list_url  # 所有页面使用相同的URL
+                # list_url 已在上面根据 category 构建
                 
                 print(f"\n[列表页 {page}/{max_pages}] URL: {list_url} (通过点击分页按钮加载)")
                 # 传递crawler实例，确保在同一浏览器会话中执行
@@ -2715,6 +2841,23 @@ class CentanetCrawler:
         error_count = sum(1 for r in results if isinstance(r, Exception))
         none_count = sum(1 for r in results if r is None and not isinstance(r, Exception))
         
+        # 如果指定了region，在保存前过滤self.properties
+        if region:
+            print(f"\n根据地区 '{region}' 过滤结果...")
+            original_count = len(self.properties)
+            filtered_properties = []
+            for prop in self.properties:
+                if prop.region and prop.region == region:
+                    filtered_properties.append(prop)
+                elif not prop.region:
+                    # 如果没有region信息，保留（可能是提取失败）
+                    filtered_properties.append(prop)
+            self.properties = filtered_properties
+            print(f"  原始记录数: {original_count}")
+            print(f"  过滤后保留: {len(self.properties)} 条记录")
+            if original_count > len(self.properties):
+                print(f"  已移除: {original_count - len(self.properties)} 条不匹配的记录")
+        
         print(f"\n" + "="*70)
         print(f"爬取完成!")
         print(f"  总URL数: {len(all_property_urls)}")
@@ -2795,11 +2938,28 @@ class CentanetCrawler:
 
 async def main():
     """主函数"""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='中原地产爬虫')
+    parser.add_argument('--max-pages', type=int, default=2, help='最大爬取页数')
+    parser.add_argument('--max-properties', type=int, default=50, help='最大爬取房产数量')
+    parser.add_argument('--category', type=str, default=None, 
+                       help='类别筛选: buy/買樓, rent/租樓, transaction/成交')
+    parser.add_argument('--region', type=str, default=None,
+                       help='地区筛选: 港島, 九龍, 新界東, 新界西 等')
+    
+    args = parser.parse_args()
+    
     crawler = CentanetCrawler()
     
     # 先测试爬取少量数据
     print("开始测试爬取...")
-    await crawler.crawl_all(max_pages=2, max_properties=50)
+    await crawler.crawl_all(
+        max_pages=args.max_pages,
+        max_properties=args.max_properties,
+        category=args.category,
+        region=args.region
+    )
     
     print("\n" + "="*70)
     print("测试完成！")
@@ -2807,7 +2967,8 @@ async def main():
     print("\n如果测试成功，可以:")
     print("1. 增加 max_pages 参数爬取更多页面")
     print("2. 移除 max_properties 限制爬取所有房产")
-    print("3. 检查保存的数据文件确认数据质量")
+    print("3. 使用 --category 和 --region 参数筛选特定类别和地区")
+    print("4. 检查保存的数据文件确认数据质量")
 
 if __name__ == "__main__":
     asyncio.run(main())
