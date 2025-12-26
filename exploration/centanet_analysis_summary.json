@@ -1,0 +1,58 @@
+{
+  "url": "https://hk.centanet.com/findproperty/list/buy",
+  "html_length": 633944,
+  "markdown_length": 30989,
+  "found_containers": [
+    [
+      "[class*=\"property\"]",
+      24
+    ],
+    [
+      "[class*=\"item\"]",
+      150
+    ]
+  ],
+  "property_links_count": 59,
+  "sample_links": [
+    [
+      "https://www.linkedin.com/company/centalineproperty/posts/?feedView=all",
+      ""
+    ],
+    [
+      "https://hk.centanet.com/findproperty/list/buy",
+      "買樓"
+    ],
+    [
+      "https://hk.centanet.com/findproperty/list/rent",
+      "租樓"
+    ],
+    [
+      "https://hk.centanet.com/findproperty/list/transaction",
+      "成交"
+    ],
+    [
+      "https://hk.centanet.com/findproperty/list/estate",
+      "屋苑"
+    ],
+    [
+      "https://hk.centanet.com/findproperty/list/new-property",
+      "一手新盤"
+    ],
+    [
+      "https://hk.centanet.com/info/property-news",
+      "新聞分析"
+    ],
+    [
+      "https://hk.centanet.com/findproperty/district/index",
+      "地區專頁"
+    ],
+    [
+      "https://hk.centanet.com/info/property-news/中原動態",
+      "中原動態"
+    ],
+    [
+      "https://hk.centanet.com/findproperty/list/agent",
+      "搵代理人"
+    ]
+  ]
+}

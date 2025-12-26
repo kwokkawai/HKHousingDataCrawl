@@ -1,0 +1,24 @@
+# 香港房产爬虫项目依赖包
+# Python 3.8+ 要求
+
+# 核心依赖 - 必需
+crawl4ai>=0.3.0
+
+# 可选依赖 - 用于效率测试（内存监控）
+psutil>=5.9.0
+
+# 可选依赖 - 用于结果可视化
+matplotlib>=3.5.0
+
+# 注意：
+# - crawl4ai 是核心依赖，必须安装
+# - psutil 用于 efficiency_test.py 的内存使用测试，如果未安装会显示警告但程序仍可运行
+# - matplotlib 用于 visualize_results.py 的图表生成，如果未安装只会生成文本报告
+#
+# 重要：安装完 Python 包后，必须单独安装 Playwright 浏览器：
+#   playwright install
+#   或
+#   python -m playwright install
+#
+# 如果不安装 Playwright 浏览器，运行测试时会遇到 "Executable doesn't exist" 错误
+
