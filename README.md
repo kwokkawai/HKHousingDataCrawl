@@ -16,7 +16,7 @@
 2. **28Hse.com** (www.28hse.com)
 
    - 香港知名房产信息平台
-   - URL: https://www.28hse.com
+   - URL: https://www.28hse.com/buy/apartment（買樓）或 https://www.28hse.com/rent/apartment（租樓）
 
 3. **利嘉阁** (www.ricacorp.com)
    - 香港主要地产代理公司
@@ -50,6 +50,8 @@ code/
 │
 ├── centanet_explorer.py        # 中原地产页面结构探索脚本
 ├── centanet_crawler.py         # 中原地产爬虫（已实现）
+├── 28hse_explorer.py           # 28Hse.com 页面结构探索脚本
+├── 28hse_crawler.py            # 28Hse.com 爬虫（已实现）
 │
 ├── results/                     # 测试结果目录
 │   ├── feasibility_report.json  # 可行性测试报告
@@ -63,7 +65,11 @@ code/
 │   └── centanet_analysis_summary.json # 分析摘要
 │
 ├── data/                        # 爬取的数据目录
-│   └── centanet/                # 中原地产数据
+│   ├── centanet/                # 中原地产数据
+│   │   ├── properties_*.json    # JSON格式数据
+│   │   ├── properties_*.csv     # CSV格式数据
+│   │   └── failed_urls_*.txt   # 失败的URL列表
+│   └── 28hse/                   # 28Hse.com 数据
 │       ├── properties_*.json    # JSON格式数据
 │       ├── properties_*.csv     # CSV格式数据
 │       └── failed_urls_*.txt   # 失败的URL列表
@@ -227,6 +233,9 @@ python visualize_results.py
 ```bash
 # 探索中原地产页面结构
 python centanet_explorer.py
+
+# 探索 28Hse.com 页面结构
+python 28hse_explorer.py
 ```
 
 该脚本会：
@@ -237,7 +246,9 @@ python centanet_explorer.py
 - 保存 HTML 和 Markdown 文件到 `exploration/` 目录
 - 生成分析摘要报告
 
-#### 2. 爬取中原地产数据
+#### 2. 爬取房产数据
+
+##### 2.1 爬取中原地产数据
 
 运行爬虫程序爬取房产数据：
 
@@ -253,7 +264,30 @@ python centanet_crawler.py --category buy --region 新界西
 python centanet_crawler.py --category transaction --region 九龍
 ```
 
-**爬虫功能**：
+##### 2.2 爬取 28Hse.com 数据
+
+运行 28Hse.com 爬虫程序：
+
+```bash
+# 基本用法（默认：2页，最多50个房产，只爬取apartment类型）
+python 28hse_crawler.py
+
+# 自定义参数
+python 28hse_crawler.py --max-pages 10 --max-properties 100
+
+# 按类别筛选（buy/買樓 或 rent/租樓）
+python 28hse_crawler.py --category buy --max-pages 5
+python 28hse_crawler.py --category rent --max-pages 5
+
+# 按地区筛选（港島、九龍、新界、離島）
+python 28hse_crawler.py --region 九龍 --max-pages 5
+python 28hse_crawler.py --region 新界 --max-pages 5
+
+# 组合使用：爬取新界地区的買樓数据
+python 28hse_crawler.py --category buy --region 新界 --max-pages 5
+```
+
+**中原地产爬虫功能**：
 
 - ✅ **AJAX 分页支持**：自动处理 JavaScript 驱动的分页，通过模拟点击分页按钮实现翻页
 - ✅ **多策略数据提取**：采用多种方法提取数据，提高成功率
@@ -272,14 +306,41 @@ python centanet_crawler.py --category transaction --region 九龍
 - ✅ **自动保存**：自动保存为 JSON 和 CSV 格式
 - ✅ **错误处理**：记录失败的 URL，支持断点续传
 
+**28Hse.com 爬虫功能**：
+
+- ✅ **Apartment 类型筛选**：只爬取住宅（apartment）类型，自动排除写字楼、商铺、车位等其他类型
+- ✅ **列表页地址提取**：从列表页提取地址信息，补充详情页的 address 字段
+- ✅ **多策略数据提取**：采用多种方法提取数据，提高成功率
+  - 从 HTML 面包屑导航元素中提取
+  - 从页面文本中通过正则表达式提取
+  - 从 URL 中推断类别信息
+- ✅ **完整字段提取**：提取房产的所有关键信息
+  - 基本信息：标题、价格、面积
+  - 位置信息：区域、地区、街道、地址（支持从列表页和详情页提取）
+  - 层级导航：类别（住宅售盤/住宅租盤）、大区（港島/九龍/新界/離島）、二级区域、屋苑名称、完整面包屑路径
+  - 房产属性：房型、卧室数、楼层、朝向
+  - 其他信息：描述、图片等
+- ✅ **类别和地区筛选**：支持按类别（buy/買樓、rent/租樓）和地区（港島、九龍、新界、離島）筛选
+- ✅ **字段映射优化**：正确解析 28hse 特有的 breadcrumb 格式，准确映射 category、region、district_level2、estate_name 等字段
+- ✅ **并发爬取**：支持异步并发爬取详情页，提高效率
+- ✅ **自动保存**：自动保存为 JSON 和 CSV 格式
+- ✅ **错误处理**：完善的错误处理和重试机制，记录失败的 URL
+
 **输出文件**：
 
+**中原地产**：
 - `data/centanet/properties_YYYYMMDD_HHMMSS.json` - JSON 格式数据
 - `data/centanet/properties_YYYYMMDD_HHMMSS.csv` - CSV 格式数据
 - `data/centanet/failed_urls_YYYYMMDD_HHMMSS.txt` - 失败的 URL 列表
 
+**28Hse.com**：
+- `data/28hse/properties_YYYYMMDD_HHMMSS.json` - JSON 格式数据
+- `data/28hse/properties_YYYYMMDD_HHMMSS.csv` - CSV 格式数据
+- `data/28hse/failed_urls_YYYYMMDD_HHMMSS.txt` - 失败的 URL 列表
+
 **命令行参数**：
 
+**中原地产爬虫**：
 ```bash
 python centanet_crawler.py [选项]
 
@@ -290,8 +351,20 @@ python centanet_crawler.py [选项]
   --region REGION        地区筛选：港島, 九龍, 新界東, 新界西 等
 ```
 
+**28Hse.com 爬虫**：
+```bash
+python 28hse_crawler.py [选项]
+
+选项：
+  --max-pages N          最大爬取页数（默认：2）
+  --max-properties N     最大爬取房产数量（默认：50）
+  --category CATEGORY    类别筛选：buy/買樓, rent/租樓
+  --region REGION        地区筛选：港島, 九龍, 新界, 離島 等
+```
+
 **示例**：
 
+**中原地产**：
 ```bash
 # 爬取前10页，最多100个房产
 python centanet_crawler.py --max-pages 10 --max-properties 100
@@ -303,16 +376,32 @@ python centanet_crawler.py --category buy --region 新界西 --max-pages 5
 python centanet_crawler.py --category transaction --region 九龍 --max-pages 20
 ```
 
+**28Hse.com**：
+```bash
+# 爬取前10页，最多100个房产
+python 28hse_crawler.py --max-pages 10 --max-properties 100
+
+# 只爬取九龍地区的買樓数据
+python 28hse_crawler.py --category buy --region 九龍 --max-pages 5
+
+# 爬取新界地区的租樓数据
+python 28hse_crawler.py --category rent --region 新界 --max-pages 5
+```
+
 #### 3. 查看爬取结果
 
 爬取完成后，可以查看保存的数据文件：
 
 ```bash
-# 查看JSON数据
+# 查看中原地产JSON数据
 cat data/centanet/properties_*.json | python -m json.tool | head -50
+
+# 查看28Hse.com JSON数据
+cat data/28hse/properties_*.json | python -m json.tool | head -50
 
 # 查看CSV数据（如果安装了pandas）
 python -c "import pandas as pd; df = pd.read_csv('data/centanet/properties_*.csv'); print(df.head())"
+python -c "import pandas as pd; df = pd.read_csv('data/28hse/properties_*.csv'); print(df.head())"
 ```
 
 ## 可行性测试说明
@@ -638,14 +727,29 @@ python -c "import pandas as pd; df = pd.read_csv('data/centanet/properties_*.csv
   - ✅ **数据保存**：自动保存为 JSON 和 CSV 格式
   - ✅ **错误处理**：记录失败 URL，支持断点续传
   - ✅ **代码优化**：清理冗余代码，添加详细注释，提高可维护性
+- ✅ **28Hse.com 爬虫**: 已实现并全面优化
+  - ✅ **列表页爬取**：支持買樓、租樓两种类别，只爬取 apartment 类型
+  - ✅ **分页支持**：支持 URL 参数分页和 AJAX 分页
+  - ✅ **详情页爬取**：并发爬取详情页，提高效率
+  - ✅ **列表页地址提取**：从列表页提取地址信息，补充详情页的 address 字段
+  - ✅ **多策略数据提取**：
+    - 从 HTML 面包屑导航元素提取
+    - 从页面文本中通过正则表达式提取
+    - 从 URL 中推断类别信息
+  - ✅ **完整字段提取**：提取所有关键信息，包括价格、面积、位置、面包屑导航、房产属性等
+  - ✅ **字段映射优化**：正确解析 28hse 特有的 breadcrumb 格式（主頁 > 地產主頁 > 住宅售盤 > ...）
+  - ✅ **类别和地区筛选**：支持按类别（buy/rent）和地区（港島/九龍/新界/離島）筛选数据
+  - ✅ **数据保存**：自动保存为 JSON 和 CSV 格式
+  - ✅ **错误处理**：完善的错误处理和重试机制，记录失败 URL
+  - ✅ **代码优化**：添加详细注释，提高可维护性
 
 ### 进行中
 
-- 🔄 **其他网站爬虫**: 实现 28Hse.com 和利嘉阁的爬虫
+- 🔄 **利嘉阁爬虫**: 实现利嘉阁的爬虫
 
 ### 计划中
 
-1. **其他网站爬虫**: 实现 28Hse.com 和利嘉阁的爬虫
+1. **利嘉阁爬虫**: 实现利嘉阁的爬虫
 2. **数据存储优化**: 实现数据库存储和查询功能
 3. **数据清洗**: 实现数据标准化和验证
 4. **定时任务**: 实现定时自动爬取
@@ -749,17 +853,24 @@ Centanet 网站使用 JavaScript 驱动的 AJAX 分页，URL 不变，需要通�
 4. **开始爬取**：
 
    ```bash
-   # 基本用法（默认：2页，最多50个房产）
+   # 中原地产 - 基本用法（默认：2页，最多50个房产）
    python centanet_crawler.py
 
-   # 自定义参数
+   # 中原地产 - 自定义参数
    python centanet_crawler.py --max-pages 20 --max-properties 120
 
-   # 按类别和地区筛选
+   # 中原地产 - 按类别和地区筛选
    python centanet_crawler.py --category buy --region 新界西
+
+   # 28Hse.com - 基本用法（默认：2页，最多50个房产，只爬取apartment）
+   python 28hse_crawler.py
+
+   # 28Hse.com - 按类别和地区筛选
+   python 28hse_crawler.py --category buy --region 九龍 --max-pages 5
    ```
 
 5. **查看结果**：
-   - 数据文件：`data/centanet/properties_*.json` 和 `properties_*.csv`
-   - 失败 URL：`data/centanet/failed_urls_*.txt`
+   - 中原地产数据文件：`data/centanet/properties_*.json` 和 `properties_*.csv`
+   - 28Hse.com 数据文件：`data/28hse/properties_*.json` 和 `properties_*.csv`
+   - 失败 URL：`data/{site}/failed_urls_*.txt`
    - 测试报告：`results/`
