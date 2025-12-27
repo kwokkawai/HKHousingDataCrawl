@@ -52,6 +52,8 @@ code/
 ├── centanet_crawler.py         # 中原地产爬虫（已实现）
 ├── 28hse_explorer.py           # 28Hse.com 页面结构探索脚本
 ├── 28hse_crawler.py            # 28Hse.com 爬虫（已实现）
+├── ricacorp_explorer.py        # 利嘉阁页面结构探索脚本
+├── ricacorp_crawler.py         # 利嘉阁爬虫（已实现）
 │
 ├── results/                     # 测试结果目录
 │   ├── feasibility_report.json  # 可行性测试报告
@@ -69,7 +71,11 @@ code/
 │   │   ├── properties_*.json    # JSON格式数据
 │   │   ├── properties_*.csv     # CSV格式数据
 │   │   └── failed_urls_*.txt   # 失败的URL列表
-│   └── 28hse/                   # 28Hse.com 数据
+│   ├── 28hse/                   # 28Hse.com 数据
+│   │   ├── properties_*.json    # JSON格式数据
+│   │   ├── properties_*.csv     # CSV格式数据
+│   │   └── failed_urls_*.txt   # 失败的URL列表
+│   └── ricacorp/                # 利嘉阁数据
 │       ├── properties_*.json    # JSON格式数据
 │       ├── properties_*.csv     # CSV格式数据
 │       └── failed_urls_*.txt   # 失败的URL列表
@@ -236,6 +242,9 @@ python centanet_explorer.py
 
 # 探索 28Hse.com 页面结构
 python 28hse_explorer.py
+
+# 探索利嘉阁页面结构
+python ricacorp_explorer.py
 ```
 
 该脚本会：
@@ -287,6 +296,21 @@ python 28hse_crawler.py --region 新界 --max-pages 5
 python 28hse_crawler.py --category buy --region 新界 --max-pages 5
 ```
 
+##### 2.3 爬取利嘉阁数据
+
+运行利嘉阁爬虫程序：
+
+```bash
+# 基本用法（默认：2页，最多50个房产）
+python ricacorp_crawler.py
+
+# 自定义参数
+python ricacorp_crawler.py --max-pages 10 --max-properties 100
+
+# 按类别和地区筛选（目前支持类别和地区筛选）
+python ricacorp_crawler.py --category buy --region 新界西 --max-pages 5
+```
+
 **中原地产爬虫功能**：
 
 - ✅ **AJAX 分页支持**：自动处理 JavaScript 驱动的分页，通过模拟点击分页按钮实现翻页
@@ -326,6 +350,27 @@ python 28hse_crawler.py --category buy --region 新界 --max-pages 5
 - ✅ **自动保存**：自动保存为 JSON 和 CSV 格式
 - ✅ **错误处理**：完善的错误处理和重试机制，记录失败的 URL
 
+**利嘉阁爬虫功能**：
+
+- ✅ **列表页爬取**：支持爬取利嘉阁的房产列表页
+- ✅ **详情页爬取**：并发爬取详情页，提高效率
+- ✅ **URL 规范化**：自动规范化 URL，确保 URL 格式一致（去除百分号编码）
+- ✅ **多策略数据提取**：采用多种方法提取数据，提高成功率
+  - 从 HTML 面包屑导航元素提取（优先）
+  - 从 URL slug 推断（备用）
+- ✅ **完整字段提取**：提取房产的所有关键信息
+  - 基本信息：标题、价格、面积
+  - 位置信息：区域、地区、街道、地址
+  - 层级导航：类别（二手真盤源）、大区（港島/九龍/新界東/新界西）、二级区域、屋苑名称、完整面包屑路径
+  - 房产属性：房型、卧室数、楼层、朝向
+  - 其他信息：描述、图片等
+- ✅ **面包屑去重优化**：自动去除重复的面包屑项（例如：屯門南 > 屯門南），过滤纯「X座」格式的项（例如：j座、J座），因为它们通常已经包含在上一项中（例如：旭麟閣 (J座)）
+- ✅ **字段映射优化**：正确解析利嘉阁特有的 breadcrumb 格式（主頁 > 二手真盤源 > 新界西 > 屯門 > 屯門南 > 兆麟苑 > 旭麟閣 (J座)），准确映射 category、region、district、district_level2、estate_name 等字段
+- ✅ **URL 过滤**：严格过滤无效 URL（例如：`/property/list/`、`buy;postTags=...`），只提取有效的详情页 URL
+- ✅ **并发爬取**：支持异步并发爬取详情页，提高效率
+- ✅ **自动保存**：自动保存为 JSON 和 CSV 格式
+- ✅ **错误处理**：完善的错误处理和重试机制，记录失败 URL
+
 **输出文件**：
 
 **中原地产**：
@@ -337,6 +382,11 @@ python 28hse_crawler.py --category buy --region 新界 --max-pages 5
 - `data/28hse/properties_YYYYMMDD_HHMMSS.json` - JSON 格式数据
 - `data/28hse/properties_YYYYMMDD_HHMMSS.csv` - CSV 格式数据
 - `data/28hse/failed_urls_YYYYMMDD_HHMMSS.txt` - 失败的 URL 列表
+
+**利嘉阁**：
+- `data/ricacorp/properties_YYYYMMDD_HHMMSS.json` - JSON 格式数据
+- `data/ricacorp/properties_YYYYMMDD_HHMMSS.csv` - CSV 格式数据
+- `data/ricacorp/failed_urls_YYYYMMDD_HHMMSS.txt` - 失败的 URL 列表
 
 **命令行参数**：
 
@@ -360,6 +410,17 @@ python 28hse_crawler.py [选项]
   --max-properties N     最大爬取房产数量（默认：50）
   --category CATEGORY    类别筛选：buy/買樓, rent/租樓
   --region REGION        地区筛选：港島, 九龍, 新界, 離島 等
+```
+
+**利嘉阁爬虫**：
+```bash
+python ricacorp_crawler.py [选项]
+
+选项：
+  --max-pages N          最大爬取页数（默认：2）
+  --max-properties N     最大爬取房产数量（默认：50）
+  --category CATEGORY    类别筛选（可选）
+  --region REGION        地区筛选（可选）
 ```
 
 **示例**：
@@ -388,6 +449,15 @@ python 28hse_crawler.py --category buy --region 九龍 --max-pages 5
 python 28hse_crawler.py --category rent --region 新界 --max-pages 5
 ```
 
+**利嘉阁**：
+```bash
+# 爬取前10页，最多100个房产
+python ricacorp_crawler.py --max-pages 10 --max-properties 100
+
+# 只爬取新界西的房产数据
+python ricacorp_crawler.py --region 新界西 --max-pages 5
+```
+
 #### 3. 查看爬取结果
 
 爬取完成后，可以查看保存的数据文件：
@@ -399,9 +469,13 @@ cat data/centanet/properties_*.json | python -m json.tool | head -50
 # 查看28Hse.com JSON数据
 cat data/28hse/properties_*.json | python -m json.tool | head -50
 
+# 查看利嘉阁 JSON数据
+cat data/ricacorp/properties_*.json | python -m json.tool | head -50
+
 # 查看CSV数据（如果安装了pandas）
 python -c "import pandas as pd; df = pd.read_csv('data/centanet/properties_*.csv'); print(df.head())"
 python -c "import pandas as pd; df = pd.read_csv('data/28hse/properties_*.csv'); print(df.head())"
+python -c "import pandas as pd; df = pd.read_csv('data/ricacorp/properties_*.csv'); print(df.head())"
 ```
 
 ## 可行性测试说明
@@ -740,16 +814,28 @@ python -c "import pandas as pd; df = pd.read_csv('data/28hse/properties_*.csv');
   - ✅ **字段映射优化**：正确解析 28hse 特有的 breadcrumb 格式（主頁 > 地產主頁 > 住宅售盤 > ...）
   - ✅ **类别和地区筛选**：支持按类别（buy/rent）和地区（港島/九龍/新界/離島）筛选数据
   - ✅ **数据保存**：自动保存为 JSON 和 CSV 格式
+- ✅ **错误处理**：完善的错误处理和重试机制，记录失败 URL
+- ✅ **代码优化**：添加详细注释，提高可维护性
+- ✅ **利嘉阁爬虫**: 已实现并全面优化
+  - ✅ **列表页爬取**：支持爬取利嘉阁的房产列表页
+  - ✅ **详情页爬取**：并发爬取详情页，提高效率
+  - ✅ **URL 规范化**：自动规范化 URL，确保 URL 格式一致（去除百分号编码）
+  - ✅ **多策略数据提取**：
+    - 从 HTML 面包屑导航元素提取（优先）
+    - 从 URL slug 推断（备用）
+  - ✅ **完整字段提取**：提取所有关键信息，包括价格、面积、位置、面包屑导航、房产属性等
+  - ✅ **面包屑去重优化**：自动去除重复的面包屑项，过滤纯「X座」格式的项
+  - ✅ **字段映射优化**：正确解析利嘉阁特有的 breadcrumb 格式，准确映射 category、region、district、district_level2、estate_name 等字段
+  - ✅ **URL 过滤**：严格过滤无效 URL，只提取有效的详情页 URL
+  - ✅ **数据保存**：自动保存为 JSON 和 CSV 格式
   - ✅ **错误处理**：完善的错误处理和重试机制，记录失败 URL
   - ✅ **代码优化**：添加详细注释，提高可维护性
 
 ### 进行中
 
-- 🔄 **利嘉阁爬虫**: 实现利嘉阁的爬虫
+（暂无）
 
 ### 计划中
-
-1. **利嘉阁爬虫**: 实现利嘉阁的爬虫
 2. **数据存储优化**: 实现数据库存储和查询功能
 3. **数据清洗**: 实现数据标准化和验证
 4. **定时任务**: 实现定时自动爬取
@@ -867,10 +953,17 @@ Centanet 网站使用 JavaScript 驱动的 AJAX 分页，URL 不变，需要通�
 
    # 28Hse.com - 按类别和地区筛选
    python 28hse_crawler.py --category buy --region 九龍 --max-pages 5
+
+   # 利嘉阁 - 基本用法（默认：2页，最多50个房产）
+   python ricacorp_crawler.py
+
+   # 利嘉阁 - 自定义参数
+   python ricacorp_crawler.py --max-pages 10 --max-properties 100
    ```
 
 5. **查看结果**：
    - 中原地产数据文件：`data/centanet/properties_*.json` 和 `properties_*.csv`
    - 28Hse.com 数据文件：`data/28hse/properties_*.json` 和 `properties_*.csv`
+   - 利嘉阁数据文件：`data/ricacorp/properties_*.json` 和 `properties_*.csv`
    - 失败 URL：`data/{site}/failed_urls_*.txt`
    - 测试报告：`results/`
