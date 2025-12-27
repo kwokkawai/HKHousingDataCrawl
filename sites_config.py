@@ -76,7 +76,7 @@ CENTANET_CONFIG = SiteConfig(
 HSE28_CONFIG = SiteConfig(
     name="28Hse.com",
     base_url="https://www.28hse.com",
-    list_url="https://www.28hse.com",
+    list_url="https://www.28hse.com/buy/apartment",  # 默认只爬取apartment类型
     domain="www.28hse.com",
     headers={
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
